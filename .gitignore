@@ -1,0 +1,40 @@
+# Eclipse
+.classpath
+.project
+.settings/
+
+# Intellij
+.idea
+!.idea/
+.idea/*
+!.idea/runConfigurations/Run_locally.xml
+*.iml
+*.iws
+
+# Mac
+.DS_Store
+
+# VSCode
+.vscode
+
+# Maven
+log/
+target/
+effective-pom.xml
+
+#local db
+db.mv.db
+
+akka-context/
+.claude/settings.local.json
+
+/target-*.log
+
+# Local AI-assistant tooling and design notes. Kept on disk, not published.
+.akka/
+.claude/
+.mcp.json
+AGENTS.md
+CLAUDE.md
+specs/
+sample.zip

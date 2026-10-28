@@ -1,0 +1,34 @@
+// Contract of the customer preferences service. Services that call it unpack this file at build time.
+syntax = "proto3";
+
+package preferences.v1;
+
+option java_multiple_files = true;
+option java_package = "preferences.v1.proto";
+
+service PreferencesService {
+  // Returns the preferences of a customer. A customer with no record has every channel off.
+  rpc Get(GetRequest) returns (Preferences) {}
+  // Replaces the preferences of a customer. The last write wins. The caller is recorded from its token.
+  rpc Update(UpdateRequest) returns (Preferences) {}
+}
+
+message GetRequest {
+  string customer_id = 1;
+}
+
+message UpdateRequest {
+  string customer_id = 1;
+  bool email = 2;
+  bool sms = 3;
+  bool phone = 4;
+  // Why the preferences changed. At most 200 characters. Kept in the audit history.
+  string reason = 5;
+}
+
+message Preferences {
+  string customer_id = 1;
+  bool email = 2;
+  bool sms = 3;
+  bool phone = 4;
+}

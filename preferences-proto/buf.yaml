@@ -1,0 +1,14 @@
+version: v2
+modules:
+  - path: src/main/resources
+lint:
+  use:
+    - STANDARD
+  except:
+    # The calls return the Preferences message directly, not a message per call.
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - RPC_RESPONSE_STANDARD_NAME
+breaking:
+  # FILE also reports renames, which change the generated Java names and break source compatibility.
+  use:
+    - FILE
