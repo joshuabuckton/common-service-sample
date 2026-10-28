@@ -37,6 +37,11 @@ Read [docs/flows.md](docs/flows.md) for the diagrams of each flow.
 | `advisor-service` | Akka service | A caller in the same project. |
 | `partner-service` | Akka service | A caller in another project. It uses the proto jar only. |
 
+The contract exists once, in `preferences-proto`. Each of the three services unpacks that jar into `target/proto`
+during the build, and the SDK generates its gRPC code from there. The SDK parent generates code only when a
+`src/main/proto` directory exists, so each service keeps an empty one, marked with a `.gitkeep` file because git does
+not track empty directories. Do not copy the `.proto` file into a service.
+
 ## Build and test
 
 You need Java 21 or later and the Akka repository token in your Maven settings. Run the build from the
@@ -134,8 +139,8 @@ by service name resolves only inside one project. It needs three things:
    local `mvn install` is enough for a demo. Version the jar with the contract, and follow the schema
    evolution rules in the [gRPC endpoint documentation](https://doc.akka.io/sdk/grpc-endpoints.html).
 2. A build that unpacks the `.proto` files into `target/proto` before code generation. See
-   `partner-service/pom.xml`. Keep an empty `src/main/proto` directory in the module, because the SDK
-   parent generates code only when that directory exists.
+   `partner-service/pom.xml`. Keep an empty `src/main/proto` directory in the module, as described under
+   [Modules](#modules).
 3. The public address and a token. `partner.preferences-host` holds the address, and
    `PARTNER_PREFERENCES_HOST` overrides it. The `akka.javasdk.grpc.client` setting maps the address to
    `localhost` for local runs.
