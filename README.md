@@ -10,7 +10,7 @@ The sample uses the Akka SDK only. Every link points to the SDK documentation.
 
 | Access pattern | Caller | What the sample shows |
 |---|---|---|
-| Same project | `advisor-service` | A gRPC call and an HTTP call by service name, `@Acl` by calling service, and a stream that feeds a local view. |
+| Same project | `advisor-service` | A gRPC call and an HTTP call by service name, `@Acl` by calling service, a stream that feeds a local view, and an agent that uses the MCP tools. |
 | Other project | `partner-service` | The public address, a bearer token and the proto jar as the only shared artifact. |
 | Interactive and LLM clients | Any MCP client | An MCP endpoint with read-only tools, behind the same public address and token rules. |
 
@@ -37,10 +37,18 @@ Read [docs/flows.md](docs/flows.md) for the diagrams of each flow.
 | `advisor-service` | Akka service | A caller in the same project. |
 | `partner-service` | Akka service | A caller in another project. It uses the proto jar only. |
 
-The contract exists once, in `preferences-proto`. Each of the three services unpacks that jar into `target/proto`
-during the build, and the SDK generates its gRPC code from there. The SDK parent generates code only when a
-`src/main/proto` directory exists, so each service keeps an empty one, marked with a `.gitkeep` file because git does
-not track empty directories. Do not copy the `.proto` file into a service.
+The gRPC contract lives in one place, the `preferences-proto` jar, so that it is easy to share. The owner and every
+caller generate their stubs from the same versioned artifact, so they cannot drift apart. A caller depends on the
+contract and never on the code of the common service, which is what lets a service in another project or team use
+it. The jar can also be reviewed and checked for compatibility without building a service. See
+[Check the contract](#check-the-contract).
+
+To use it, each of the three services unpacks the jar into `target/proto` during the build, and the SDK generates its
+gRPC code from there. Do not copy the `.proto` file into a service, because that brings back the drift that the jar
+prevents.
+
+One detail of the SDK: it generates code only when a `src/main/proto` directory exists. So each service keeps an
+empty one, marked with a `.gitkeep` file because git does not track empty directories.
 
 ## Build and test
 
@@ -82,7 +90,7 @@ The scripts in `scripts/` call the services with `curl`. They build unsigned tok
 
 | Script | Steps |
 |---|---|
-| `scripts/smoke-same-project.sh [customer]` | Write over gRPC, read from the local view, ask the live question over HTTP, and two rejected requests. |
+| `scripts/smoke-same-project.sh [customer]` | Write over gRPC, read from the local view, ask the live question over HTTP, and two rejected requests. With `WITH_AGENT=1` it also asks the assistant, which needs a model (see [Agents as callers](#agents-as-callers)). |
 | `scripts/smoke-other-project.sh [customer]` | Write and read through the public address, and the three token cases. |
 | `scripts/smoke-audit-and-mcp.sh <customer>` | The audit history as an auditor, the role check, the MCP tools and a rejected MCP call. |
 
@@ -108,6 +116,30 @@ changed the preferences or why, because every reader in the project sees it. `ad
 its own `PreferenceChanged` record with the same type name and fields. The stream sends JSON, and the
 SDK also supports protobuf messages for consumers, which would move the stream contract into the proto
 jar. The sample does not use that.
+
+### Agents as callers
+
+`ContactAdvisorAgent` in `advisor-service` is an [agent](https://doc.akka.io/sdk/agents.html) that uses the MCP
+endpoint of `preferences-service` as its tools. `POST /customers/assistant` with `{"question": "..."}` returns
+`{"answer": "..."}`. The agent is a caller like the others in this section.
+
+- It reaches the endpoint by service name, with `RemoteMcpTools.fromService`, so it needs no address. See
+  [remote MCP tools](https://doc.akka.io/sdk/agents/extending.html#mcp_tools).
+- `withAllowedToolNames` limits it to `get_contact_preferences` and `can_contact`. The MCP endpoint has no write
+  tool anyway, so the agent can read preferences and cannot change them.
+- It sends the same bearer token as the other calls of the service, `advisor.preferences-token`, as an
+  `Authorization` header. The `@Acl` of `PreferencesMcpEndpoint` allows `advisor-service`, and the token rule
+  applies on top of it, as described under [Token](#token).
+- Every request is its own session, so the agent remembers no earlier question.
+- The model is OpenAI by default, with the key in `OPENAI_API_KEY`. The key is needed only to run the agent
+  locally. The build and the tests need none. Set `AGENT_MODEL_PROVIDER`, and the key of that provider, to use
+  another provider. A local model works too if it supports tool calls. The sample was tried by hand with one.
+- The tests replace the model and switch the MCP tools off with `advisor.assistant.mcp-tools=false`, because the
+  TestKit cannot reach another service to list the tools. They cover the route and the agent with a model that
+  answers directly, and not the calls to `preferences-service`.
+
+Choose per question, as with the view and the live call. The agent suits a free-text question from a person. The
+view and the live call suit a program that needs a yes or no.
 
 ## Token
 
@@ -157,6 +189,7 @@ tools, `get_contact_preferences` and `can_contact`. Both are read-only.
   the audit history stays on the HTTP routes that need the auditor role.
 - The descriptions of the tools and of their parameters are the contract for the model. A renamed tool
   breaks its callers, like a renamed field in a proto.
+- An agent in the same project is one such client. See [Agents as callers](#agents-as-callers).
 - The SDK does not support the OAuth flows of the MCP specification. A client sends a ready-made bearer token.
 - The sample tests the endpoint with hand-written JSON-RPC, because the TestKit has no MCP client. It has not
   been tried with a real MCP client. A rejected call answers with plain text and an HTTP status, not with a
@@ -189,20 +222,13 @@ you pass, `main` by default, and skips the comparison when that ref has no `pref
   package and serve both versions during the transition.
 - Adding a field passes the check. Mark the number and name of a removed field `reserved`.
 
-## What was and was not tested
-
-- All modules build and pass their tests with `mvn verify`.
-- The three services ran together locally, and the scripts passed. That covered the gRPC call by name, the HTTP
-  call by name, the stream into the local view, the call to the public address, the history, MCP and the outage case.
-- The sample has not been deployed to an Akka project. The public address, the JWKS key set and the
-  two-project setup follow the SDK documentation and have not been run.
-
 ## Limits
 
 - The HTTP routes of `advisor-service` and `partner-service` allow calls from the internet and check no caller,
   so that you can try the sample with `curl`. Restrict the ACL and add token checks before you reuse them.
-- After `preferences-service` restarts, `advisor-service` takes several seconds to reconnect to the stream
-  (about 8 seconds in a local run), and its view lags until then. A list can also lag behind a write by a short time.
+  This includes `POST /customers/assistant`, where every call is also a request to a model.
+- After `preferences-service` restarts, `advisor-service` takes several seconds to reconnect to the stream,
+  and its view lags until then. A list can also lag behind a write by a short time.
 - The live question of `advisor-service` waits up to 5 seconds. A write that times out can still have been
   applied, so read before you write again. `partner-service` sets no timeout of its own.
 - The history row of a customer grows with every write. That fits an audit trail on a sample. A customer with

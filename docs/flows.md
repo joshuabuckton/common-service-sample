@@ -19,7 +19,7 @@ flowchart LR
 
 ## Runtime topology
 
-Who calls whom. The three access patterns are in one picture. advisor-service calls by service name. partner-service calls the public address. An MCP client calls the public address too. Only the stream feeds a local view, and it stays inside the project.
+Who calls whom. The three access patterns are in one picture. advisor-service calls by service name, and so does the agent in advisor-service, which uses the MCP tools. partner-service calls the public address. An MCP client calls the public address too. Only the stream feeds a local view, and it stays inside the project.
 
 ```mermaid
 flowchart LR
@@ -27,7 +27,7 @@ flowchart LR
   partnerUser(["Partner user"])
   assistant(["MCP client or LLM"])
   subgraph projectA["Akka project"]
-    advisor["advisor-service"]
+    advisor["advisor-service<br/>with ContactAdvisorAgent"]
     view[("ContactPreferencesByCustomerView")]
     prefs["preferences-service<br/>gRPC, HTTP and MCP endpoints"]
     entity[("CustomerPreferencesEntity<br/>one per customer")]
@@ -40,6 +40,7 @@ flowchart LR
   adv -- "HTTP" --> advisor
   advisor -- "gRPC write, token, by service name" --> prefs
   advisor -- "HTTP can-contact, token, by service name" --> prefs
+  advisor -- "MCP /mcp from the agent, token, by service name" --> prefs
   prefs --> entity
   entity --> publisher
   publisher -- "stream preference-changes" --> view
@@ -76,18 +77,6 @@ sequenceDiagram
   else the service cannot be reached
     A-->>U: 503
   end
-```
-
-## Read paths in advisor-service
-
-Two questions, two sources. The read of the preferences comes from the local view. The live question calls the service. Choose per question.
-
-```mermaid
-flowchart TD
-  q1["GET contact-preferences"] --> v["ContactPreferencesByCustomerView<br/>local, may lag, answers when the service is down"]
-  v --> r1["200, known true or false"]
-  q2["GET can-contact/channel"] --> h["HTTP call by service name<br/>exact, fails when the service is down"]
-  h --> r2["200 or 503 after the timeout"]
 ```
 
 ## The preference-changes stream
@@ -170,6 +159,35 @@ sequenceDiagram
   E-->>M: text answer
   M->>E: any call without a token
   E-->>M: rejected with an HTTP status
+```
+
+## Agent in the same project
+
+advisor-service has an agent that answers a free-text question. It reads the preferences through the MCP tools of preferences-service, by service name and with the same token as the other calls. The runtime lists the tools before the model call. The agent can read preferences and cannot change them.
+
+```mermaid
+sequenceDiagram
+  actor U as Advisor user
+  participant A as advisor-service endpoint
+  participant G as ContactAdvisorAgent
+  participant M as Model
+  participant E as PreferencesMcpEndpoint at /mcp
+  participant K as CustomerPreferencesEntity
+  U->>A: POST /customers/assistant with a question
+  A->>G: ask, in a new session
+  G->>E: tools/list with a bearer token, by service name
+  E-->>G: get_contact_preferences, can_contact
+  G->>M: system message, question and the two tools
+  M-->>G: call get_contact_preferences for c-1
+  G->>E: tools/call with a bearer token
+  E->>K: get
+  K-->>E: preferences
+  E-->>G: preferences as text
+  G->>M: the tool result
+  M-->>G: answer
+  G-->>A: answer
+  A-->>U: 200 with the answer
+  Note over A,U: 503 when the model or preferences-service cannot be reached
 ```
 
 ## Audit history
