@@ -10,7 +10,7 @@ The sample uses the Akka SDK only. Every link points to the SDK documentation.
 
 | Access pattern | Caller | What the sample shows |
 |---|---|---|
-| Same project | `advisor-service` | A gRPC call and an HTTP call by service name, `@Acl` by calling service, a stream that feeds a local view, and an agent that uses the MCP tools. |
+| Same project | `advisor-service` | A gRPC call and an HTTP call by service name, `@Acl` by calling service, an agent that uses the MCP tools and an optional local view fed by a stream. |
 | Other project | `partner-service` | The public address, a bearer token and the proto jar as the only shared artifact. |
 | Interactive and LLM clients | Any MCP client | An MCP endpoint with read-only tools, behind the same public address and token rules. |
 
@@ -23,8 +23,8 @@ Read [docs/flows.md](docs/flows.md) for the diagrams of each flow.
 | How do callers reach it? | By name in the same project, by public address from another project, through MCP for tools. | `PreferencesGrpcEndpointImpl`, `PreferencesEndpoint`, `PreferencesMcpEndpoint` |
 | Who may call it? | `@Acl` names the services. A bearer token from `preferences-callers` is required of every caller. | The `@Acl` and `@JWT` annotations on the three endpoints |
 | What is the contract? | The proto jar for gRPC. The tool names and parameters for MCP. | `preferences-proto`, `PreferencesMcpEndpoint` |
-| How do callers learn about changes? | A service stream inside the project. | `PreferenceChangesPublisher` |
-| What happens when it is down? | The read of `advisor-service` answers from its local view. Writes and live questions return 503. | `ContactPreferencesByCustomerView`, `AdvisorEndpoint` |
+| How do callers learn about changes? | A service stream inside the project, for a caller that keeps a local view. | `PreferenceChangesPublisher` |
+| What happens when it is down? | Writes and live questions return 503. The one read that `advisor-service` keeps in a local view still answers. | `ContactPreferencesByCustomerView`, `AdvisorEndpoint` |
 | Who changed what, and why? | An event-sourced entity keeps every write. The token subject is the `changedBy` value. | `CustomerPreferencesEntity`, `PreferenceHistoryView` |
 | What if a write arrives twice or late? | Each write sets all three channels, so a second delivery changes nothing. A reader ignores an event older than its row. | `PreferenceChanged`, `ContactPreferencesByCustomerView` |
 
@@ -105,10 +105,10 @@ To see the outage behaviour, stop `preferences-service` after the first script. 
 - A write goes over gRPC with the generated client from the proto jar.
 - The question "may I contact this customer on this channel" goes over HTTP. It shows the second client
   style. Both calls are in `PreferencesServiceCaller`.
-- The read comes from `ContactPreferencesByCustomerView`, which a [service stream](https://doc.akka.io/sdk/consuming-producing.html)
-  feeds. It never calls `preferences-service`, so it can lag behind a write and it keeps answering when the
-  service is down. Choose per question: the local view for what can be a little old, the live call for
-  what must be exact.
+- Start with the direct call. The one read of `advisor-service` that must keep working when the service is down
+  comes from `ContactPreferencesByCustomerView`, which a [service stream](https://doc.akka.io/sdk/consuming-producing.html)
+  feeds. It never calls `preferences-service`, so it can lag behind a write. Add a view only for a caller with
+  that need.
 - `@Acl` on the endpoints and on the stream names `advisor-service`. See [access control](https://doc.akka.io/sdk/access-control.html).
 
 The stream carries the customer id, the three flags and the time of the change. It does not carry who
@@ -138,8 +138,8 @@ endpoint of `preferences-service` as its tools. `POST /customers/assistant` with
   TestKit cannot reach another service to list the tools. They cover the route and the agent with a model that
   answers directly, and not the calls to `preferences-service`.
 
-Choose per question, as with the view and the live call. The agent suits a free-text question from a person. The
-view and the live call suit a program that needs a yes or no.
+The agent suits a free-text question from a person. The live call suits a program that needs a yes or no. The view
+is for a program that must still answer when the service is down.
 
 ## Token
 
